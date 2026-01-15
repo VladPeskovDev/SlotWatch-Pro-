@@ -10,8 +10,8 @@ import {
 } from './types.js';
 
 // Константы
-const DEFAULT_INTERVAL_MIN = 40; 
-const DEFAULT_INTERVAL_MAX = 125; 
+const DEFAULT_INTERVAL_MIN = 50; 
+const DEFAULT_INTERVAL_MAX = 120; 
 const DEFAULT_REFRESH_DELAY = 3000; 
 const ALARM_NAME = 'slotwatch_monitor';
 const CHANGE_THRESHOLD = 5; 
@@ -87,19 +87,13 @@ async function captureReference(): Promise<MessageResponse> {
       format: 'png',
     });
 
-    // Получаем ключевые фразы (пока не используются)
-    const data = (await chrome.storage.local.get(
-      'keywords'
-    )) as Partial<StorageData>;
-    const keyPhrases = data.keywords || [];
-
     // Сохраняем эталон
     const reference: ReferenceSnapshot = {
-      url: tab.url || '',
-      timestamp: Date.now(),
-      screenshot,
-      keyPhrases,
-    };
+  url: tab.url || '',
+  timestamp: Date.now(),
+  screenshot,
+  keyPhrases: [], // просто пустой массив
+};
 
     await chrome.storage.local.set({ reference });
 
@@ -387,7 +381,7 @@ async function checkForChanges() {
 
     // Если изменения обнаружены
     if (comparison.hasChanged) {
-      console.log('⚠️ Changes detected! Sending notifications...');
+      console.log('Changes detected! Sending notifications...');
       await sendTelegramNotification(data.telegram!, comparison);
       await showBrowserNotification(comparison);
     }

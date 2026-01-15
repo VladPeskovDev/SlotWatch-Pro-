@@ -9,7 +9,7 @@ export interface ReferenceSnapshot {
   url: string;
   timestamp: number;
   screenshot: string; 
-  keyPhrases: string[]; 
+  keyPhrases: string[]; // deprecated, not used in visual comparison
 }
 
 // Настройки мониторинга
@@ -27,7 +27,6 @@ export interface StorageData {
   telegram?: TelegramConfig;
   reference?: ReferenceSnapshot;
   monitoring: MonitoringConfig;
-  keywords: string[]; 
 }
 
 // Сообщения между popup и background

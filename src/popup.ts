@@ -20,9 +20,7 @@ const lastCheckDiv = document.getElementById('lastCheck') as HTMLDivElement;
 
 const botTokenInput = document.getElementById('botToken') as HTMLInputElement;
 const chatIdInput = document.getElementById('chatId') as HTMLInputElement;
-const keywordsTextarea = document.getElementById(
-  'keywords'
-) as HTMLTextAreaElement;
+
 
 // Состояние
 let isMonitoring = false;
@@ -40,19 +38,12 @@ async function loadSettings() {
   const data = (await chrome.storage.local.get([
     'telegram',
     'monitoring',
-    'keywords',
     'reference',
   ])) as Partial<StorageData>;
 
   if (data.telegram) {
     botTokenInput.value = data.telegram.botToken || '';
     chatIdInput.value = data.telegram.chatId || '';
-  }
-
-  if (data.keywords) {
-    keywordsTextarea.value = data.keywords.join('\n');
-  } else {
-    keywordsTextarea.value = 'Мест нет\nNo slots available\nQueue is full';
   }
 
   if (data.reference) {
@@ -161,38 +152,21 @@ async function handleToggle() {
 async function handleSaveSettings() {
   const botToken = botTokenInput.value.trim();
   const chatId = chatIdInput.value.trim();
-  const keywordsText = keywordsTextarea.value.trim();
 
   if (!botToken || !chatId) {
     alert('Please fill in both Telegram Bot Token and Chat ID');
     return;
   }
 
-  const keywords = keywordsText
-    .split('\n')
-    .map((k) => k.trim())
-    .filter((k) => k.length > 0);
-
-  if (keywords.length === 0) {
-    alert('Please provide at least one keyword');
-    return;
-  }
-
-  const payload = {
+  // Сохраняем напрямую в storage
+  await chrome.storage.local.set({
     telegram: { botToken, chatId },
-    keywords,
-  };
+  });
 
-  const response = await sendMessage(MessageType.SAVE_SETTINGS, payload);
-
-  if (response.success) {
-    saveSettingsBtn.textContent = 'Saved!';
-    setTimeout(() => {
-      saveSettingsBtn.textContent = 'Save Settings';
-    }, 2000);
-  } else {
-    alert(`Error: ${response.error}`);
-  }
+  saveSettingsBtn.textContent = 'Saved!';
+  setTimeout(() => {
+    saveSettingsBtn.textContent = 'Save Settings';
+  }, 2000);
 }
 
 
