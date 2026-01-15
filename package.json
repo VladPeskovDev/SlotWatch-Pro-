@@ -1,0 +1,27 @@
+{
+  "name": "slotwatch-pro-",
+  "version": "1.0.0",
+  "description": "Universal queue monitoring browser extension. Captures page snapshots via OCR and sends Telegram alerts when availability changes.",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-public",
+    "copy-public": "cp -r public/* dist/",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist && mkdir dist"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/chrome": "^0.1.33",
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "tesseract.js": "^7.0.0"
+  }
+}
