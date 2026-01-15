@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlotWatch Pro</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>SlotWatch Pro</h1>
+      <p class="subtitle">Universal Queue Monitor</p>
+    </header>
+
+    <section class="status">
+      <div class="status-indicator" id="statusIndicator">
+        <span class="dot"></span>
+        <span id="statusText">Inactive</span>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button id="captureBtn" class="btn btn-primary">
+        📸 Capture Reference
+      </button>
+      
+      <button id="toggleBtn" class="btn btn-secondary" disabled>
+        ▶️ Start Monitoring
+      </button>
+    </section>
+
+    <section class="settings">
+      <h3>Telegram Settings</h3>
+      
+      <div class="input-group">
+        <label for="botToken">Bot Token:</label>
+        <input type="text" id="botToken" placeholder="1234567890:ABC...">
+      </div>
+      
+      <div class="input-group">
+        <label for="chatId">Chat ID:</label>
+        <input type="text" id="chatId" placeholder="123456789">
+      </div>
+      
+      <button id="saveSettingsBtn" class="btn btn-small">Save Settings</button>
+    </section>
+
+    <section class="advanced">
+      <h3>Detection Keywords</h3>
+      <div class="input-group">
+        <label for="keywords">Keywords to detect (one per line):</label>
+        <textarea id="keywords" rows="3" placeholder="Мест нет&#10;No slots available&#10;Queue is full"></textarea>
+      </div>
+    </section>
+
+    <footer>
+      <div class="info" id="lastCheck">Last check: Never</div>
+    </footer>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

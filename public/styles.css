@@ -1,0 +1,198 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-size: 14px;
+  color: #333;
+  background: #f5f5f5;
+}
+
+.container {
+  background: white;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+header {
+  text-align: center;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 12px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a73e8;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: #666;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #444;
+}
+
+.status {
+  background: #f8f9fa;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9e9e9e;
+  animation: pulse 2s infinite;
+}
+
+.status-indicator.active .dot {
+  background: #4caf50;
+}
+
+.status-indicator.inactive .dot {
+  background: #9e9e9e;
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: #1a73e8;
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1557b0;
+}
+
+.btn-secondary {
+  background: #34a853;
+  color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #2d8e47;
+}
+
+.btn-secondary.stop {
+  background: #ea4335;
+}
+
+.btn-secondary.stop:hover:not(:disabled) {
+  background: #c5362c;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: #5f6368;
+  color: white;
+}
+
+.btn-small:hover {
+  background: #4a4d51;
+}
+
+.settings, .advanced {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 12px;
+}
+
+.input-group {
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #5f6368;
+  margin-bottom: 4px;
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: #1a73e8;
+}
+
+textarea {
+  resize: vertical;
+}
+
+footer {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 8px;
+}
+
+.info {
+  font-size: 11px;
+  color: #888;
+  text-align: center;
+}
