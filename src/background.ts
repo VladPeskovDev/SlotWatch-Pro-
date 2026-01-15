@@ -1,15 +1,20 @@
-import Tesseract from 'tesseract.js';
-import { MessageType, Message, MessageResponse, StorageData,
+import {
+  MessageType,
+  Message,
+  MessageResponse,
+  StorageData,
   ReferenceSnapshot,
   MonitoringConfig,
   TelegramConfig,
   ComparisonResult,
 } from './types.js';
 
-const DEFAULT_INTERVAL_MIN = 60; 
-const DEFAULT_INTERVAL_MAX = 120; 
+// Константы
+const DEFAULT_INTERVAL_MIN = 40; 
+const DEFAULT_INTERVAL_MAX = 125; 
 const DEFAULT_REFRESH_DELAY = 3000; 
 const ALARM_NAME = 'slotwatch_monitor';
+const CHANGE_THRESHOLD = 5; 
 
 // Инициализация при установке расширения
 chrome.runtime.onInstalled.addListener(() => {
@@ -19,7 +24,9 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Инициализация дефолтных настроек
 async function initializeStorage() {
-  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+  const data = (await chrome.storage.local.get(
+    'monitoring'
+  )) as Partial<StorageData>;
 
   if (!data.monitoring) {
     const defaultConfig: MonitoringConfig = {
@@ -66,7 +73,6 @@ async function handleMessage(message: Message): Promise<MessageResponse> {
 // Захват эталонного снимка
 async function captureReference(): Promise<MessageResponse> {
   try {
-    // Получаем активную вкладку
     const [tab] = await chrome.tabs.query({
       active: true,
       currentWindow: true,
@@ -81,11 +87,10 @@ async function captureReference(): Promise<MessageResponse> {
       format: 'png',
     });
 
-    // OCR распознавание
-    const recognizedText = await performOCR(screenshot);
-
-    // Получаем ключевые фразы
-    const data = (await chrome.storage.local.get('keywords')) as Partial<StorageData>;
+    // Получаем ключевые фразы (пока не используются)
+    const data = (await chrome.storage.local.get(
+      'keywords'
+    )) as Partial<StorageData>;
     const keyPhrases = data.keywords || [];
 
     // Сохраняем эталон
@@ -93,12 +98,12 @@ async function captureReference(): Promise<MessageResponse> {
       url: tab.url || '',
       timestamp: Date.now(),
       screenshot,
-      recognizedText,
       keyPhrases,
     };
 
     await chrome.storage.local.set({ reference });
 
+    console.log('Reference captured successfully');
     return { success: true, data: reference };
   } catch (error) {
     console.error('Capture error:', error);
@@ -109,22 +114,109 @@ async function captureReference(): Promise<MessageResponse> {
   }
 }
 
-// OCR распознавание текста
-async function performOCR(imageData: string): Promise<string> {
+// Конвертация base64 в ImageData
+async function base64ToImageData(base64: string): Promise<ImageData> {
   try {
-    const result = await Tesseract.recognize(imageData, 'rus+eng', {
-      logger: (m) => console.log(m),
-    });
-    return result.data.text;
+    const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+    
+    if (!base64Data) {
+      throw new Error('Invalid base64 data');
+    }
+    
+    // Декодируем base64 в бинарные данные
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Создаём Blob из бинарных данных
+    const blob = new Blob([bytes], { type: 'image/png' });
+    
+    // Создаём ImageBitmap
+    const imageBitmap = await createImageBitmap(blob);
+    
+    // Получаем ImageData через OffscreenCanvas
+    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      throw new Error('Failed to get canvas context');
+    }
+    
+    ctx.drawImage(imageBitmap, 0, 0);
+    return ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
   } catch (error) {
-    console.error('OCR error:', error);
-    throw new Error('Failed to recognize text');
+    console.error('base64ToImageData error:', error);
+    throw new Error('Unable to download all specified images');
+  }
+}
+
+// Сравнение двух скриншотов
+async function compareScreenshots(
+  referenceBase64: string,
+  currentBase64: string
+): Promise<ComparisonResult> {
+  try {
+    const refImageData = await base64ToImageData(referenceBase64);
+    const curImageData = await base64ToImageData(currentBase64);
+
+    // Проверка размеров
+    if (
+      refImageData.width !== curImageData.width ||
+      refImageData.height !== curImageData.height
+    ) {
+      console.warn('Screenshot dimensions differ');
+      return {
+        hasChanged: true,
+        changePercentage: 100,
+        detectedText: '',
+        missingPhrases: ['Page layout changed'],
+      };
+    }
+
+    const refData = refImageData.data;
+    const curData = curImageData.data;
+    let diffPixels = 0;
+    const totalPixels = refData.length / 4; 
+
+    // Сравниваем попиксельно (каждый 4й пиксель для скорости)
+    for (let i = 0; i < refData.length - 3; i += 16) {
+      if (i + 2 >= curData.length) break;
+
+      // RGB сравнение (игнорируем альфа канал)
+      const rDiff = Math.abs((refData[i] ?? 0) - (curData[i] ?? 0));
+      const gDiff = Math.abs((refData[i + 1] ?? 0) - (curData[i + 1] ?? 0));
+      const bDiff = Math.abs((refData[i + 2] ?? 0) - (curData[i + 2] ?? 0));
+
+      // Если разница больше порога (игнорируем мелкие изменения)
+      if (rDiff > 30 || gDiff > 30 || bDiff > 30) {
+        diffPixels++;
+      }
+    }
+
+    const sampledPixels = totalPixels / 4; 
+    const changePercentage = (diffPixels / sampledPixels) * 100;
+
+    console.log(`Change detected: ${changePercentage.toFixed(2)}%`);
+
+    return {
+      hasChanged: changePercentage > CHANGE_THRESHOLD,
+      changePercentage: parseFloat(changePercentage.toFixed(2)),
+      detectedText: '',
+      missingPhrases:
+        changePercentage > CHANGE_THRESHOLD ? ['Visual changes detected'] : [],
+    };
+  } catch (error) {
+    console.error('Comparison error:', error);
+    throw new Error('Failed to compare screenshots');
   }
 }
 
 // Старт мониторинга
 async function startMonitoring(): Promise<MessageResponse> {
   try {
+    // Проверяем наличие эталона
     const data = (await chrome.storage.local.get([
       'reference',
       'telegram',
@@ -141,8 +233,12 @@ async function startMonitoring(): Promise<MessageResponse> {
 
     // Обновляем статус
     const config: MonitoringConfig = {
-      ...data.monitoring!,
+      ...(data.monitoring || {}),
       isActive: true,
+      intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
+      intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
+      autoRefresh: data.monitoring?.autoRefresh ?? true,
+      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
     };
     await chrome.storage.local.set({ monitoring: config });
 
@@ -154,6 +250,7 @@ async function startMonitoring(): Promise<MessageResponse> {
       periodInMinutes: intervalMinutes,
     });
 
+    console.log('Monitoring started');
     return { success: true };
   } catch (error) {
     return {
@@ -166,16 +263,23 @@ async function startMonitoring(): Promise<MessageResponse> {
 // Остановка мониторинга
 async function stopMonitoring(): Promise<MessageResponse> {
   try {
-    const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+    const data = (await chrome.storage.local.get(
+      'monitoring'
+    )) as Partial<StorageData>;
 
     const config: MonitoringConfig = {
-      ...data.monitoring!,
+      ...(data.monitoring || {}),
       isActive: false,
+      intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
+      intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
+      autoRefresh: data.monitoring?.autoRefresh ?? true,
+      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
     };
     await chrome.storage.local.set({ monitoring: config });
 
     await chrome.alarms.clear(ALARM_NAME);
 
+    console.log('Monitoring stopped');
     return { success: true };
   } catch (error) {
     return {
@@ -187,7 +291,9 @@ async function stopMonitoring(): Promise<MessageResponse> {
 
 // Получение статуса
 async function getStatus(): Promise<MessageResponse> {
-  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+  const data = (await chrome.storage.local.get(
+    'monitoring'
+  )) as Partial<StorageData>;
   return { success: true, data: data.monitoring };
 }
 
@@ -208,7 +314,7 @@ async function saveSettings(payload: unknown): Promise<MessageResponse> {
   }
 }
 
-// Обработка alarm 
+// Обработка alarm (периодическая проверка)
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === ALARM_NAME) {
     await checkForChanges();
@@ -228,49 +334,60 @@ async function checkForChanges() {
       return;
     }
 
-    // Получаем вкладку с URL эталона
-    const tabs = await chrome.tabs.query({});
-    const targetTab = tabs.find((tab) => tab.url === data.reference!.url);
-    if (!targetTab || !targetTab.id) {
-      console.log('Target tab not found');
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    if (!activeTab || !activeTab.id) {
+      console.log('No active tab found');
       return;
     }
 
-    // Активируем нужную вкладку
-    await chrome.tabs.update(targetTab.id, { active: true });
+    //console.log(`Checking tab: ${activeTab.url}`);
 
-
+    // Обновляем страницу если включен auto-refresh
     if (data.monitoring?.autoRefresh) {
-    await chrome.tabs.reload(targetTab.id);
-    await new Promise((resolve) =>
-    setTimeout(resolve, data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY)
-     );
-     }
+      await chrome.tabs.reload(activeTab.id);
+      // Ждём загрузки страницы
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY
+        )
+      );
+    }
 
     // Делаем новый скриншот
     const screenshot = await chrome.tabs.captureVisibleTab({
       format: 'png',
     });
 
-    // OCR распознавание
-    const currentText = await performOCR(screenshot);
+    // Сравниваем скриншоты
+    const comparison = await compareScreenshots(
+      data.reference.screenshot,
+      screenshot
+    );
 
-    // Сравниваем
-    const comparison = compareTexts(
-      data.reference.recognizedText,
-      currentText,
-      data.reference.keyPhrases
+    console.log(
+      `Comparison result: ${comparison.hasChanged ? 'CHANGED' : 'NO CHANGE'} (${comparison.changePercentage}%)`
     );
 
     // Обновляем время последней проверки
     const config: MonitoringConfig = {
-      ...data.monitoring,
+      ...(data.monitoring || {}),
+      isActive: data.monitoring?.isActive || false,
+      intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
+      intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
+      autoRefresh: data.monitoring?.autoRefresh ?? true,
+      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
       lastCheckTime: Date.now(),
     };
     await chrome.storage.local.set({ monitoring: config });
 
     // Если изменения обнаружены
     if (comparison.hasChanged) {
+      console.log('⚠️ Changes detected! Sending notifications...');
       await sendTelegramNotification(data.telegram!, comparison);
       await showBrowserNotification(comparison);
     }
@@ -279,75 +396,54 @@ async function checkForChanges() {
   }
 }
 
-// Сравнение текстов
-function compareTexts(
-  referenceText: string,
-  currentText: string,
-  keyPhrases: string[]
-): ComparisonResult {
-  const missingPhrases: string[] = [];
-
-  for (const phrase of keyPhrases) {
-    const wasPresent = referenceText
-      .toLowerCase()
-      .includes(phrase.toLowerCase());
-    const isPresent = currentText.toLowerCase().includes(phrase.toLowerCase());
-
-    if (wasPresent && !isPresent) {
-      missingPhrases.push(phrase);
-    }
-  }
-
-  return {
-    hasChanged: missingPhrases.length > 0,
-    missingPhrases,
-    detectedText: currentText,
-  };
-}
-
 // Отправка уведомления в Telegram
 async function sendTelegramNotification(
   config: TelegramConfig,
   comparison: ComparisonResult
 ) {
-  const message = `SlotWatch Pro Alert!
+  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+  
+  const message = `🎯 SlotWatch Pro Alert!
 
 Detected changes on the monitored page!
 
-Missing phrases:
-${comparison.missingPhrases.map((p) => `- ${p}`).join('\n')}
+Change percentage: ${comparison.changePercentage}%
 
 Slots may be available now! Check immediately.`;
 
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-
   try {
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: config.chatId,
         text: message,
-        parse_mode: 'HTML',
       }),
     });
+
+    if (response.ok) {
+      console.log('Telegram notification sent');
+    } else {
+      console.error('Telegram error:', await response.text());
+    }
   } catch (error) {
     console.error('Telegram error:', error);
   }
 }
 
-// Браузерный алерт
+// Браузерное уведомление
 async function showBrowserNotification(comparison: ComparisonResult) {
   await chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon128.png',
     title: 'SlotWatch Pro Alert!',
-    message: `Changes detected! Missing: ${comparison.missingPhrases.join(', ')}`,
+    message: `Changes detected! ${comparison.changePercentage}% of pixels changed`,
     priority: 2,
   });
+  console.log('Browser notification shown');
 }
 
-// Рандомный интервал обновлений 
+// Случайный интервал для антидетекции
 function getRandomInterval(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }

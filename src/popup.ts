@@ -5,6 +5,7 @@ import {
   MonitoringConfig,
 } from './types.js';
 
+
 // DOM элементы
 const captureBtn = document.getElementById('captureBtn') as HTMLButtonElement;
 const toggleBtn = document.getElementById('toggleBtn') as HTMLButtonElement;
@@ -193,5 +194,6 @@ async function handleSaveSettings() {
     alert(`Error: ${response.error}`);
   }
 }
+
 
 init();

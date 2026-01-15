@@ -5,7 +5,6 @@
   "description": "Universal queue monitoring via OCR with Telegram alerts",
   
   "permissions": [
-    "activeTab",
     "tabs",
     "storage",
     "notifications",

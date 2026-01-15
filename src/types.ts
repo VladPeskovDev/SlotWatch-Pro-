@@ -9,7 +9,6 @@ export interface ReferenceSnapshot {
   url: string;
   timestamp: number;
   screenshot: string; 
-  recognizedText: string;
   keyPhrases: string[]; 
 }
 
@@ -61,6 +60,7 @@ export interface OCRResult {
 // Результат сравнения
 export interface ComparisonResult {
   hasChanged: boolean;
+  changePercentage: number; 
+  detectedText: string; 
   missingPhrases: string[]; 
-  detectedText: string;
 }

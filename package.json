@@ -21,8 +21,5 @@
     "prettier": "^3.8.0",
     "typescript": "^5.9.3",
     "vite": "^6.4.1"
-  },
-  "dependencies": {
-    "tesseract.js": "^7.0.0"
   }
 }
