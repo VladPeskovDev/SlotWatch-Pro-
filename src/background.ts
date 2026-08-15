@@ -12,12 +12,11 @@ const DEFAULT_INTERVAL_MIN = 50;
 const DEFAULT_INTERVAL_MAX = 120;
 const MODAL_CLOSE_WAIT_MIN = 1500;
 const MODAL_CLOSE_WAIT_MAX = 3500;
-const AFTER_CLICK_WAIT_MIN = 13000;
-const AFTER_CLICK_WAIT_MAX = 17000;
+const AFTER_CLICK_WAIT_MIN = 18000;
+const AFTER_CLICK_WAIT_MAX = 28000;
 
 const BOOK_BUTTON_TEXT = 'Записаться на посещение';
 const NO_SLOTS_TEXT = 'Нет свободного времени для записи';
-const CLOSE_BUTTON_TEXT = 'Закрыть';
 
 chrome.runtime.onInstalled.addListener(() => {
   initializeStorage();
@@ -158,6 +157,14 @@ async function runCycle() {
       return;
     }
 
+    // Keepalive пинг — сбрасывает таймер сессии на сервере
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => fetch(window.location.href, { method: 'HEAD', credentials: 'include' }),
+      });
+    } catch { /* игнорируем */ }
+
     // Проверяем что мы на стартовой странице
     let onStartPage = false;
     try {
@@ -226,17 +233,16 @@ async function runCycle() {
     console.log('Check result:', result);
 
     if (result?.hasNoSlots) {
-      // Мест нет — жмём "Закрыть"
+      // Мест нет — жмём "Закрыть" по CSS классу
       console.log('No slots. Closing modal...');
+      await wait(500); // пауза чтобы кнопка точно стала кликабельной
       await chrome.scripting.executeScript({
         target: { tabId },
-        func: (closeText: string) => {
-          const buttons = Array.from(document.querySelectorAll('button'));
-          const btn = buttons.find((b) => b.textContent?.trim().includes(closeText));
+        func: () => {
+          const btn = document.querySelector('button.white') as HTMLElement | null;
           btn?.click();
           return !!btn;
         },
-        args: [CLOSE_BUTTON_TEXT],
       });
       await wait(getRandomInterval(MODAL_CLOSE_WAIT_MIN, MODAL_CLOSE_WAIT_MAX));
       await scheduleNextCycle(data.monitoring);
