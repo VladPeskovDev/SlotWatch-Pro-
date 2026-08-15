@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,45 +10,64 @@
   <div class="container">
     <header>
       <h1>SlotWatch Pro</h1>
-      <p class="subtitle">Universal Queue Monitor</p>
+      <p class="subtitle">Авто-запись на Госуслугах</p>
     </header>
 
     <section class="status">
       <div class="status-indicator" id="statusIndicator">
         <span class="dot"></span>
-        <span id="statusText">Inactive</span>
+        <span id="statusText">Неактивен</span>
       </div>
+      <div class="info" id="lastCheck">Последняя проверка: никогда</div>
+      <div class="info" id="attemptCount">Попыток: 0</div>
     </section>
 
     <section class="controls">
-      <button id="captureBtn" class="btn btn-primary">
-        📸 Capture Reference
+      <button id="toggleBtn" class="btn btn-secondary">
+        ▶️ Запустить бота
       </button>
-      
-      <button id="toggleBtn" class="btn btn-secondary" disabled>
-        ▶️ Start Monitoring
-      </button>
+      <p class="hint" id="hintText">
+        Откройте страницу с кнопкой «Записаться на посещение» и нажмите запуск
+      </p>
+    </section>
+
+    <section class="log">
+      <div class="log-header">
+        <h3>Последние попытки</h3>
+        <button id="clearLogBtn" class="btn-clear">Очистить</button>
+      </div>
+      <div id="attemptLog" class="log-list">
+        <div class="log-empty">Попыток ещё не было</div>
+      </div>
     </section>
 
     <section class="settings">
-      <h3>Telegram Settings</h3>
-      
+      <h3>Telegram</h3>
+
       <div class="input-group">
         <label for="botToken">Bot Token:</label>
         <input type="text" id="botToken" placeholder="1234567890:ABC...">
       </div>
-      
+
       <div class="input-group">
         <label for="chatId">Chat ID:</label>
         <input type="text" id="chatId" placeholder="123456789">
       </div>
-      
-      <button id="saveSettingsBtn" class="btn btn-small">Save Settings</button>
-    </section>
 
-    <footer>
-      <div class="info" id="lastCheck">Last check: Never</div>
-    </footer>
+      <h3>Интервал между попытками (сек)</h3>
+      <div class="row">
+        <div class="input-group half">
+          <label for="intervalMin">Мин:</label>
+          <input type="number" id="intervalMin" value="50" min="10">
+        </div>
+        <div class="input-group half">
+          <label for="intervalMax">Макс:</label>
+          <input type="number" id="intervalMax" value="120" min="10">
+        </div>
+      </div>
+
+      <button id="saveSettingsBtn" class="btn btn-small">Сохранить</button>
+    </section>
   </div>
 
   <script src="popup.js" type="module"></script>

@@ -1,94 +1,87 @@
-import {
-  MessageType,
-  MessageResponse,
-  StorageData,
-  MonitoringConfig,
-} from './types.js';
+import { MessageType, MessageResponse, StorageData, MonitoringConfig } from './types.js';
 
-
-// DOM элементы
-const captureBtn = document.getElementById('captureBtn') as HTMLButtonElement;
 const toggleBtn = document.getElementById('toggleBtn') as HTMLButtonElement;
-const saveSettingsBtn = document.getElementById(
-  'saveSettingsBtn'
-) as HTMLButtonElement;
-const statusIndicator = document.getElementById(
-  'statusIndicator'
-) as HTMLDivElement;
+const saveSettingsBtn = document.getElementById('saveSettingsBtn') as HTMLButtonElement;
+const statusIndicator = document.getElementById('statusIndicator') as HTMLDivElement;
 const statusText = document.getElementById('statusText') as HTMLSpanElement;
 const lastCheckDiv = document.getElementById('lastCheck') as HTMLDivElement;
+const attemptCountDiv = document.getElementById('attemptCount') as HTMLDivElement;
+const hintText = document.getElementById('hintText') as HTMLParagraphElement;
+const attemptLogDiv = document.getElementById('attemptLog') as HTMLDivElement;
+const clearLogBtn = document.getElementById('clearLogBtn') as HTMLButtonElement;
 
 const botTokenInput = document.getElementById('botToken') as HTMLInputElement;
 const chatIdInput = document.getElementById('chatId') as HTMLInputElement;
+const intervalMinInput = document.getElementById('intervalMin') as HTMLInputElement;
+const intervalMaxInput = document.getElementById('intervalMax') as HTMLInputElement;
 
-
-// Состояние
 let isMonitoring = false;
-let hasReference = false;
 
-// Инициализация при открытии popup
 async function init() {
   await loadSettings();
   await updateStatus();
   attachEventListeners();
 }
 
-// Загрузка сохранённых настроек
 async function loadSettings() {
-  const data = (await chrome.storage.local.get([
-    'telegram',
-    'monitoring',
-    'reference',
-  ])) as Partial<StorageData>;
+  const data = (await chrome.storage.local.get(['telegram', 'monitoring'])) as Partial<StorageData>;
 
   if (data.telegram) {
     botTokenInput.value = data.telegram.botToken || '';
     chatIdInput.value = data.telegram.chatId || '';
   }
 
-  if (data.reference) {
-    hasReference = true;
-    toggleBtn.disabled = false;
-  }
-
   if (data.monitoring) {
+    intervalMinInput.value = String(data.monitoring.intervalMin || 50);
+    intervalMaxInput.value = String(data.monitoring.intervalMax || 120);
     isMonitoring = data.monitoring.isActive;
   }
 }
-// Обновление статуса мониторинга
+
 async function updateStatus() {
   const response = await sendMessage(MessageType.GET_STATUS);
 
   if (response.success && response.data) {
-    const status = response.data as MonitoringConfig & { lastCheckTime?: number };
+    const status = response.data as MonitoringConfig;
     isMonitoring = status.isActive;
 
     if (isMonitoring) {
       statusIndicator.classList.add('active');
       statusIndicator.classList.remove('inactive');
-      statusText.textContent = 'Monitoring Active';
-      toggleBtn.textContent = 'Stop Monitoring';
+      statusText.textContent = 'Бот активен';
+      toggleBtn.textContent = '⏹ Остановить';
       toggleBtn.classList.add('stop');
+      hintText.style.display = 'none';
     } else {
-      statusIndicator.classList.add('inactive');
       statusIndicator.classList.remove('active');
-      statusText.textContent = 'Inactive';
-      toggleBtn.textContent = 'Start Monitoring';
+      statusIndicator.classList.add('inactive');
+      statusText.textContent = 'Неактивен';
+      toggleBtn.textContent = '▶️ Запустить бота';
       toggleBtn.classList.remove('stop');
+      hintText.style.display = 'block';
     }
 
     if (status.lastCheckTime) {
       const date = new Date(status.lastCheckTime);
-      lastCheckDiv.textContent = `Last check: ${date.toLocaleTimeString()}`;
+      lastCheckDiv.textContent = `Последняя проверка: ${date.toLocaleTimeString()}`;
+    }
+
+    attemptCountDiv.textContent = `Попыток: ${status.attemptCount || 0}`;
+
+    if (status.attemptLog && status.attemptLog.length > 0) {
+      attemptLogDiv.innerHTML = [...status.attemptLog]
+        .reverse()
+        .map((ts, i) => {
+          const date = new Date(ts);
+          const num = (status.attemptCount || 0) - i;
+          return `<div class="log-item"><span class="log-num">#${num}</span><span class="log-time">${date.toLocaleTimeString()}</span></div>`;
+        })
+        .join('');
     }
   }
 }
 
-// Отправка сообщения в background
-async function sendMessage(
-  type: MessageType,
-  payload?: unknown
-): Promise<MessageResponse> {
+function sendMessage(type: MessageType, payload?: unknown): Promise<MessageResponse> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type, payload }, (response) => {
       resolve(response || { success: false, error: 'No response' });
@@ -96,78 +89,68 @@ async function sendMessage(
   });
 }
 
-// Обработчики событий
 function attachEventListeners() {
-  captureBtn.addEventListener('click', handleCapture);
   toggleBtn.addEventListener('click', handleToggle);
   saveSettingsBtn.addEventListener('click', handleSaveSettings);
+  clearLogBtn.addEventListener('click', handleClearLog);
 }
 
-// Захват эталона
-async function handleCapture() {
-  captureBtn.disabled = true;
-  captureBtn.textContent = 'Capturing...';
-
-  const response = await sendMessage(MessageType.CAPTURE_REFERENCE);
-
-  if (response.success) {
-    hasReference = true;
-    toggleBtn.disabled = false;
-    captureBtn.textContent = 'Captured!';
-    setTimeout(() => {
-      captureBtn.textContent = '📸 Capture Reference';
-      captureBtn.disabled = false;
-    }, 2000);
-  } else {
-    captureBtn.textContent = 'Failed';
-    alert(`Error: ${response.error}`);
-    setTimeout(() => {
-      captureBtn.textContent = '📸 Capture Reference';
-      captureBtn.disabled = false;
-    }, 2000);
-  }
+async function handleClearLog() {
+  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+  await chrome.storage.local.set({
+    monitoring: { ...(data.monitoring || {}), attemptLog: [], attemptCount: 0 },
+  });
+  attemptLogDiv.innerHTML = '<div class="log-empty">Попыток ещё не было</div>';
+  attemptCountDiv.textContent = 'Попыток: 0';
 }
 
-// Старт/стоп мониторинга
 async function handleToggle() {
-  if (!hasReference) return;
-
   toggleBtn.disabled = true;
 
-  const type = isMonitoring
-    ? MessageType.STOP_MONITORING
-    : MessageType.START_MONITORING;
+  const type = isMonitoring ? MessageType.STOP_MONITORING : MessageType.START_MONITORING;
   const response = await sendMessage(type);
 
   if (response.success) {
     await updateStatus();
   } else {
-    alert(`Error: ${response.error}`);
+    alert(`Ошибка: ${response.error}`);
   }
 
   toggleBtn.disabled = false;
 }
 
-// Сохранение настроек
 async function handleSaveSettings() {
   const botToken = botTokenInput.value.trim();
   const chatId = chatIdInput.value.trim();
+  const intervalMin = parseInt(intervalMinInput.value) || 50;
+  const intervalMax = parseInt(intervalMaxInput.value) || 120;
 
   if (!botToken || !chatId) {
-    alert('Please fill in both Telegram Bot Token and Chat ID');
+    alert('Заполните Bot Token и Chat ID');
     return;
   }
 
-  // Сохраняем напрямую в storage
+  if (intervalMin >= intervalMax) {
+    alert('Мин. интервал должен быть меньше макс.');
+    return;
+  }
+
+  await chrome.storage.local.set({ telegram: { botToken, chatId } });
+
+  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
   await chrome.storage.local.set({
-    telegram: { botToken, chatId },
+    monitoring: {
+      ...(data.monitoring || {}),
+      intervalMin,
+      intervalMax,
+      isActive: data.monitoring?.isActive || false,
+    },
   });
 
-  saveSettingsBtn.textContent = 'Saved!';
+  saveSettingsBtn.textContent = 'Сохранено!';
   setTimeout(() => {
-    saveSettingsBtn.textContent = 'Save Settings';
+    saveSettingsBtn.textContent = 'Сохранить';
   }, 2000);
 }
-
 
 init();

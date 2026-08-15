@@ -3,64 +3,53 @@ import {
   Message,
   MessageResponse,
   StorageData,
-  ReferenceSnapshot,
-  MonitoringConfig,
   TelegramConfig,
-  ComparisonResult,
+  MonitoringConfig,
 } from './types.js';
 
-// Константы
-const DEFAULT_INTERVAL_MIN = 50; 
-const DEFAULT_INTERVAL_MAX = 120; 
-const DEFAULT_REFRESH_DELAY = 3000; 
-const ALARM_NAME = 'slotwatch_monitor';
-const CHANGE_THRESHOLD = 5; 
+const ALARM_NAME = 'slotwatch_cycle';
+const DEFAULT_INTERVAL_MIN = 50;
+const DEFAULT_INTERVAL_MAX = 120;
+const MODAL_CLOSE_WAIT_MIN = 1500;
+const MODAL_CLOSE_WAIT_MAX = 3500;
+const AFTER_CLICK_WAIT_MIN = 13000;
+const AFTER_CLICK_WAIT_MAX = 17000;
 
-// Инициализация при установке расширения
+const BOOK_BUTTON_TEXT = 'Записаться на посещение';
+const NO_SLOTS_TEXT = 'Нет свободного времени для записи';
+const CLOSE_BUTTON_TEXT = 'Закрыть';
+
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('SlotWatch Pro installed');
   initializeStorage();
 });
 
-// Инициализация дефолтных настроек
 async function initializeStorage() {
-  const data = (await chrome.storage.local.get(
-    'monitoring'
-  )) as Partial<StorageData>;
-
+  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
   if (!data.monitoring) {
-    const defaultConfig: MonitoringConfig = {
-      isActive: false,
-      intervalMin: DEFAULT_INTERVAL_MIN,
-      intervalMax: DEFAULT_INTERVAL_MAX,
-      autoRefresh: true,
-      refreshDelay: DEFAULT_REFRESH_DELAY,
-    };
-    await chrome.storage.local.set({ monitoring: defaultConfig });
+    await chrome.storage.local.set({
+      monitoring: {
+        isActive: false,
+        intervalMin: DEFAULT_INTERVAL_MIN,
+        intervalMax: DEFAULT_INTERVAL_MAX,
+        attemptCount: 0,
+      },
+    });
   }
 }
 
-// Обработка сообщений от popup
-chrome.runtime.onMessage.addListener(
-  (message: Message, sender, sendResponse) => {
-    handleMessage(message)
-      .then(sendResponse)
-      .catch((error) => {
-        sendResponse({ success: false, error: error.message });
-      });
-    return true; 
-  }
-);
+chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
+  handleMessage(message)
+    .then(sendResponse)
+    .catch((error) => sendResponse({ success: false, error: error.message }));
+  return true;
+});
 
-// Маршрутизация сообщений
 async function handleMessage(message: Message): Promise<MessageResponse> {
   switch (message.type) {
-    case MessageType.CAPTURE_REFERENCE:
-      return await captureReference();
     case MessageType.START_MONITORING:
-      return await startMonitoring();
+      return await startBot();
     case MessageType.STOP_MONITORING:
-      return await stopMonitoring();
+      return await stopBot();
     case MessageType.GET_STATUS:
       return await getStatus();
     case MessageType.SAVE_SETTINGS:
@@ -70,235 +59,55 @@ async function handleMessage(message: Message): Promise<MessageResponse> {
   }
 }
 
-// Захват эталонного снимка
-async function captureReference(): Promise<MessageResponse> {
-  try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
+async function startBot(): Promise<MessageResponse> {
+  const data = (await chrome.storage.local.get(['telegram', 'monitoring'])) as Partial<StorageData>;
 
-    if (!tab || !tab.id) {
-      return { success: false, error: 'No active tab found' };
-    }
-
-    // Делаем скриншот
-    const screenshot = await chrome.tabs.captureVisibleTab({
-      format: 'png',
-    });
-
-    // Сохраняем эталон
-    const reference: ReferenceSnapshot = {
-  url: tab.url || '',
-  timestamp: Date.now(),
-  screenshot,
-  keyPhrases: [], // просто пустой массив
-};
-
-    await chrome.storage.local.set({ reference });
-
-    console.log('Reference captured successfully');
-    return { success: true, data: reference };
-  } catch (error) {
-    console.error('Capture error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+  if (!data.telegram?.botToken || !data.telegram?.chatId) {
+    return { success: false, error: 'Настройте Telegram перед запуском' };
   }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url) {
+    return { success: false, error: 'Нет активной вкладки' };
+  }
+
+  const config: MonitoringConfig = {
+    ...(data.monitoring || {}),
+    isActive: true,
+    intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
+    intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
+    targetUrl: tab.url,
+    targetTabId: tab.id,
+    attemptCount: 0,
+  };
+  await chrome.storage.local.set({ monitoring: config });
+
+  await runCycle();
+  return { success: true };
 }
 
-// Конвертация base64 в ImageData
-async function base64ToImageData(base64: string): Promise<ImageData> {
-  try {
-    const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
-    
-    if (!base64Data) {
-      throw new Error('Invalid base64 data');
-    }
-    
-    // Декодируем base64 в бинарные данные
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    // Создаём Blob из бинарных данных
-    const blob = new Blob([bytes], { type: 'image/png' });
-    
-    // Создаём ImageBitmap
-    const imageBitmap = await createImageBitmap(blob);
-    
-    // Получаем ImageData через OffscreenCanvas
-    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) {
-      throw new Error('Failed to get canvas context');
-    }
-    
-    ctx.drawImage(imageBitmap, 0, 0);
-    return ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
-  } catch (error) {
-    console.error('base64ToImageData error:', error);
-    throw new Error('Unable to download all specified images');
-  }
-}
-
-// Сравнение двух скриншотов
-async function compareScreenshots(
-  referenceBase64: string,
-  currentBase64: string
-): Promise<ComparisonResult> {
-  try {
-    const refImageData = await base64ToImageData(referenceBase64);
-    const curImageData = await base64ToImageData(currentBase64);
-
-    // Проверка размеров
-    if (
-      refImageData.width !== curImageData.width ||
-      refImageData.height !== curImageData.height
-    ) {
-      console.warn('Screenshot dimensions differ');
-      return {
-        hasChanged: true,
-        changePercentage: 100,
-        detectedText: '',
-        missingPhrases: ['Page layout changed'],
-      };
-    }
-
-    const refData = refImageData.data;
-    const curData = curImageData.data;
-    let diffPixels = 0;
-    const totalPixels = refData.length / 4; 
-
-    // Сравниваем попиксельно (каждый 4й пиксель для скорости)
-    for (let i = 0; i < refData.length - 3; i += 16) {
-      if (i + 2 >= curData.length) break;
-
-      // RGB сравнение (игнорируем альфа канал)
-      const rDiff = Math.abs((refData[i] ?? 0) - (curData[i] ?? 0));
-      const gDiff = Math.abs((refData[i + 1] ?? 0) - (curData[i + 1] ?? 0));
-      const bDiff = Math.abs((refData[i + 2] ?? 0) - (curData[i + 2] ?? 0));
-
-      // Если разница больше порога (игнорируем мелкие изменения)
-      if (rDiff > 30 || gDiff > 30 || bDiff > 30) {
-        diffPixels++;
-      }
-    }
-
-    const sampledPixels = totalPixels / 4; 
-    const changePercentage = (diffPixels / sampledPixels) * 100;
-
-    console.log(`Change detected: ${changePercentage.toFixed(2)}%`);
-
-    return {
-      hasChanged: changePercentage > CHANGE_THRESHOLD,
-      changePercentage: parseFloat(changePercentage.toFixed(2)),
-      detectedText: '',
-      missingPhrases:
-        changePercentage > CHANGE_THRESHOLD ? ['Visual changes detected'] : [],
-    };
-  } catch (error) {
-    console.error('Comparison error:', error);
-    throw new Error('Failed to compare screenshots');
-  }
-}
-
-// Старт мониторинга
-async function startMonitoring(): Promise<MessageResponse> {
-  try {
-    // Проверяем наличие эталона
-    const data = (await chrome.storage.local.get([
-      'reference',
-      'telegram',
-      'monitoring',
-    ])) as Partial<StorageData>;
-
-    if (!data.reference) {
-      return { success: false, error: 'No reference snapshot captured' };
-    }
-
-    if (!data.telegram?.botToken || !data.telegram?.chatId) {
-      return { success: false, error: 'Telegram settings not configured' };
-    }
-
-    // Обновляем статус
-    const config: MonitoringConfig = {
-      ...(data.monitoring || {}),
-      isActive: true,
-      intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
-      intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
-      autoRefresh: data.monitoring?.autoRefresh ?? true,
-      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
-    };
-    await chrome.storage.local.set({ monitoring: config });
-
-    // Запускаем alarm
-    const intervalMinutes =
-      getRandomInterval(config.intervalMin, config.intervalMax) / 60;
-    await chrome.alarms.create(ALARM_NAME, {
-      delayInMinutes: intervalMinutes,
-      periodInMinutes: intervalMinutes,
-    });
-
-    console.log('Monitoring started');
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-// Остановка мониторинга
-async function stopMonitoring(): Promise<MessageResponse> {
-  try {
-    const data = (await chrome.storage.local.get(
-      'monitoring'
-    )) as Partial<StorageData>;
-
-    const config: MonitoringConfig = {
+async function stopBot(): Promise<MessageResponse> {
+  await chrome.alarms.clear(ALARM_NAME);
+  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+  await chrome.storage.local.set({
+    monitoring: {
       ...(data.monitoring || {}),
       isActive: false,
       intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
       intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
-      autoRefresh: data.monitoring?.autoRefresh ?? true,
-      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
-    };
-    await chrome.storage.local.set({ monitoring: config });
-
-    await chrome.alarms.clear(ALARM_NAME);
-
-    console.log('Monitoring stopped');
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+    },
+  });
+  return { success: true };
 }
 
-// Получение статуса
 async function getStatus(): Promise<MessageResponse> {
-  const data = (await chrome.storage.local.get(
-    'monitoring'
-  )) as Partial<StorageData>;
+  const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
   return { success: true, data: data.monitoring };
 }
 
-// Сохранение настроек
 async function saveSettings(payload: unknown): Promise<MessageResponse> {
   try {
-    const settings = payload as {
-      telegram: TelegramConfig;
-      keywords: string[];
-    };
-    await chrome.storage.local.set(settings);
+    await chrome.storage.local.set(payload as object);
     return { success: true };
   } catch (error) {
     return {
@@ -308,116 +117,204 @@ async function saveSettings(payload: unknown): Promise<MessageResponse> {
   }
 }
 
-// Обработка alarm (периодическая проверка)
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === ALARM_NAME) {
-    await checkForChanges();
+    const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+    if (data.monitoring?.isActive) {
+      await runCycle();
+    }
   }
 });
 
-// Проверка изменений на странице
-async function checkForChanges() {
+async function runCycle() {
+  const data = (await chrome.storage.local.get(['telegram', 'monitoring'])) as Partial<StorageData>;
+
+  if (!data.monitoring?.isActive) return;
+
+  const attemptCount = (data.monitoring.attemptCount || 0) + 1;
+  const now = Date.now();
+  const attemptLog = [...(data.monitoring.attemptLog || []), now].slice(-10);
+  await chrome.storage.local.set({
+    monitoring: { ...data.monitoring, lastCheckTime: now, attemptCount, attemptLog },
+  });
+
+  console.log(`Cycle #${attemptCount}`);
+
   try {
-    const data = (await chrome.storage.local.get([
-      'reference',
-      'telegram',
-      'monitoring',
-    ])) as Partial<StorageData>;
+    const tabId = data.monitoring.targetTabId;
+    const targetUrl = data.monitoring.targetUrl;
 
-    if (!data.reference || !data.monitoring?.isActive) {
+    if (!tabId) {
+      await notifyError('Целевая вкладка не найдена. Перезапустите бота.');
+      await stopBot();
       return;
     }
 
-    const [activeTab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
+    try {
+      await chrome.tabs.get(tabId);
+    } catch {
+      await notifyError('Вкладка была закрыта. Перезапустите бота.');
+      await stopBot();
+      return;
+    }
+
+    // Проверяем что мы на стартовой странице
+    let onStartPage = false;
+    try {
+      const check = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (text: string) => document.body.innerText.includes(text),
+        args: [BOOK_BUTTON_TEXT],
+      });
+      onStartPage = !!check[0]?.result;
+    } catch {
+      onStartPage = false;
+    }
+
+    // Если ушли со стартовой — возвращаемся
+    if (!onStartPage && targetUrl) {
+      console.log('Not on start page, navigating back...');
+      await chrome.tabs.update(tabId, { url: targetUrl });
+      await waitForTabLoad(tabId);
+      await wait(getRandomInterval(1000, 2500));
+    }
+
+    // Жмём "Записаться на посещение"
+    const clickResult = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (text: string) => {
+        const spans = Array.from(document.querySelectorAll('.answer-btn__title'));
+        const byClass = spans.find((el) => el.textContent?.includes(text));
+        if (byClass) {
+          (byClass.closest('.answer-btn__container') as HTMLElement)?.click();
+          return true;
+        }
+        const all = Array.from(document.querySelectorAll('a, button, [role="button"], div[class*="answer"]'));
+        const byText = all.find((el) => el.textContent?.includes(text));
+        if (byText) {
+          (byText as HTMLElement).click();
+          return true;
+        }
+        return false;
+      },
+      args: [BOOK_BUTTON_TEXT],
     });
 
-    if (!activeTab || !activeTab.id) {
-      console.log('No active tab found');
+    if (!clickResult[0]?.result) {
+      await notifyError(`Кнопка "${BOOK_BUTTON_TEXT}" не найдена на странице`);
+      await scheduleNextCycle(data.monitoring);
       return;
     }
 
-    //console.log(`Checking tab: ${activeTab.url}`);
+    // Ждём пока спиннер точно закончится — рандом 13-17 сек
+    const waitTime = getRandomInterval(AFTER_CLICK_WAIT_MIN, AFTER_CLICK_WAIT_MAX);
+    console.log(`Waiting ${waitTime}ms for page to load...`);
+    await wait(waitTime);
 
-    // Обновляем страницу если включен auto-refresh
-    if (data.monitoring?.autoRefresh) {
-      await chrome.tabs.reload(activeTab.id);
-      // Ждём загрузки страницы
-      await new Promise((resolve) =>
-        setTimeout(
-          resolve,
-          data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY
-        )
+    // Один чек — смотрим что на экране
+    const check = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (noSlotsText: string, bookText: string) => ({
+        hasNoSlots: document.body.innerText.includes(noSlotsText),
+        hasBookButton: document.body.innerText.includes(bookText),
+      }),
+      args: [NO_SLOTS_TEXT, BOOK_BUTTON_TEXT],
+    });
+
+    const result = check[0]?.result as { hasNoSlots: boolean; hasBookButton: boolean } | undefined;
+
+    console.log('Check result:', result);
+
+    if (result?.hasNoSlots) {
+      // Мест нет — жмём "Закрыть"
+      console.log('No slots. Closing modal...');
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (closeText: string) => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const btn = buttons.find((b) => b.textContent?.trim().includes(closeText));
+          btn?.click();
+          return !!btn;
+        },
+        args: [CLOSE_BUTTON_TEXT],
+      });
+      await wait(getRandomInterval(MODAL_CLOSE_WAIT_MIN, MODAL_CLOSE_WAIT_MAX));
+      await scheduleNextCycle(data.monitoring);
+
+    } else if (!result?.hasBookButton) {
+      // Стартовой кнопки нет и модалки нет — мы на экране бронирования!
+      console.log('SLOTS FOUND!');
+      await sendTelegram(
+        data.telegram!,
+        `🎯 SlotWatch Pro — Слоты найдены!\n\nПопытка #${attemptCount}\nЗаписывайтесь прямо сейчас!\n${targetUrl || ''}`
       );
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: '🎯 SlotWatch — Слоты найдены!',
+        message: 'Записывайтесь прямо сейчас!',
+        priority: 2,
+      });
+      await stopBot();
+
+    } else {
+      // Всё ещё на стартовой — клик не сработал, пробуем снова
+      console.log('Still on start page, retrying...');
+      await scheduleNextCycle(data.monitoring);
     }
 
-    // Делаем новый скриншот
-    const screenshot = await chrome.tabs.captureVisibleTab({
-      format: 'png',
-    });
-
-    // Сравниваем скриншоты
-    const comparison = await compareScreenshots(
-      data.reference.screenshot,
-      screenshot
-    );
-
-    console.log(
-      `Comparison result: ${comparison.hasChanged ? 'CHANGED' : 'NO CHANGE'} (${comparison.changePercentage}%)`
-    );
-
-    // Обновляем время последней проверки
-    const config: MonitoringConfig = {
-      ...(data.monitoring || {}),
-      isActive: data.monitoring?.isActive || false,
-      intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
-      intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
-      autoRefresh: data.monitoring?.autoRefresh ?? true,
-      refreshDelay: data.monitoring?.refreshDelay || DEFAULT_REFRESH_DELAY,
-      lastCheckTime: Date.now(),
-    };
-    await chrome.storage.local.set({ monitoring: config });
-
-    // Если изменения обнаружены
-    if (comparison.hasChanged) {
-      console.log('Changes detected! Sending notifications...');
-      await sendTelegramNotification(data.telegram!, comparison);
-      await showBrowserNotification(comparison);
-    }
   } catch (error) {
-    console.error('Check error:', error);
+    console.error('Cycle error:', error);
+    await notifyError(error instanceof Error ? error.message : 'Неизвестная ошибка');
+    const freshData = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
+    if (freshData.monitoring?.isActive) {
+      await scheduleNextCycle(freshData.monitoring);
+    }
   }
 }
 
-// Отправка уведомления в Telegram
-async function sendTelegramNotification(
-  config: TelegramConfig,
-  comparison: ComparisonResult
-) {
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  
-  const message = `🎯 SlotWatch Pro Alert!
+async function scheduleNextCycle(config: MonitoringConfig) {
+  const seconds = getRandomInterval(config.intervalMin, config.intervalMax);
+  await chrome.alarms.create(ALARM_NAME, { delayInMinutes: seconds / 60 });
+  console.log(`Next cycle in ${seconds}s`);
+}
 
-Detected changes on the monitored page!
+async function waitForTabLoad(tabId: number, timeout = 8000): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeout);
+    const listener = (updatedTabId: number, info: chrome.tabs.TabChangeInfo, _tab: chrome.tabs.Tab) => {
+      if (updatedTabId === tabId && info.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
 
-Change percentage: ${comparison.changePercentage}%
+async function notifyError(message: string) {
+  const data = (await chrome.storage.local.get('telegram')) as Partial<StorageData>;
+  if (data.telegram?.botToken && data.telegram?.chatId) {
+    await sendTelegram(data.telegram, `⚠️ SlotWatch ошибка:\n${message}`);
+  }
+  await chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: 'SlotWatch — Ошибка',
+    message,
+    priority: 1,
+  });
+}
 
-Slots may be available now! Check immediately.`;
-
+async function sendTelegram(config: TelegramConfig, text: string) {
   try {
-    const response = await fetch(url, {
+    const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text: message,
-      }),
+      body: JSON.stringify({ chat_id: config.chatId, text }),
     });
-
-    if (response.ok) {
-      console.log('Telegram notification sent');
-    } else {
+    if (!response.ok) {
       console.error('Telegram error:', await response.text());
     }
   } catch (error) {
@@ -425,19 +322,10 @@ Slots may be available now! Check immediately.`;
   }
 }
 
-// Браузерное уведомление
-async function showBrowserNotification(comparison: ComparisonResult) {
-  await chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon128.png',
-    title: 'SlotWatch Pro Alert!',
-    message: `Changes detected! ${comparison.changePercentage}% of pixels changed`,
-    priority: 2,
-  });
-  console.log('Browser notification shown');
-}
-
-// Случайный интервал для антидетекции
 function getRandomInterval(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
