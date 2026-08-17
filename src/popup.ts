@@ -14,6 +14,9 @@ const botTokenInput = document.getElementById('botToken') as HTMLInputElement;
 const chatIdInput = document.getElementById('chatId') as HTMLInputElement;
 const intervalMinInput = document.getElementById('intervalMin') as HTMLInputElement;
 const intervalMaxInput = document.getElementById('intervalMax') as HTMLInputElement;
+const heartbeatEnabledInput = document.getElementById('heartbeatEnabled') as HTMLInputElement;
+const heartbeatIntervalInput = document.getElementById('heartbeatInterval') as HTMLSelectElement;
+const directModeInput = document.getElementById('directMode') as HTMLInputElement;
 
 let isMonitoring = false;
 
@@ -32,8 +35,11 @@ async function loadSettings() {
   }
 
   if (data.monitoring) {
-    intervalMinInput.value = String(data.monitoring.intervalMin || 50);
+    intervalMinInput.value = String(data.monitoring.intervalMin || 65);
     intervalMaxInput.value = String(data.monitoring.intervalMax || 120);
+    heartbeatEnabledInput.checked = !!data.monitoring.heartbeatEnabled;
+    heartbeatIntervalInput.value = String(data.monitoring.heartbeatIntervalMinutes || 90);
+    directModeInput.checked = data.monitoring.directMode !== false;
     isMonitoring = data.monitoring.isActive;
   }
 }
@@ -122,11 +128,16 @@ async function handleToggle() {
 async function handleSaveSettings() {
   const botToken = botTokenInput.value.trim();
   const chatId = chatIdInput.value.trim();
-  const intervalMin = parseInt(intervalMinInput.value) || 50;
+  const intervalMin = parseInt(intervalMinInput.value) || 65;
   const intervalMax = parseInt(intervalMaxInput.value) || 120;
 
   if (!botToken || !chatId) {
     alert('Заполните Bot Token и Chat ID');
+    return;
+  }
+
+  if (intervalMin < 61 || intervalMax < 61) {
+    alert('Минимальный интервал — 61 секунда (ограничение Chrome)');
     return;
   }
 
@@ -137,12 +148,19 @@ async function handleSaveSettings() {
 
   await chrome.storage.local.set({ telegram: { botToken, chatId } });
 
+  const heartbeatEnabled = heartbeatEnabledInput.checked;
+  const heartbeatIntervalMinutes = parseInt(heartbeatIntervalInput.value) || 90;
+  const directMode = directModeInput.checked;
+
   const data = (await chrome.storage.local.get('monitoring')) as Partial<StorageData>;
   await chrome.storage.local.set({
     monitoring: {
       ...(data.monitoring || {}),
       intervalMin,
       intervalMax,
+      heartbeatEnabled,
+      heartbeatIntervalMinutes,
+      directMode,
       isActive: data.monitoring?.isActive || false,
     },
   });

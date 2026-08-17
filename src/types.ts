@@ -12,6 +12,11 @@ export interface MonitoringConfig {
   lastCheckTime?: number;
   attemptCount?: number;
   attemptLog?: number[];
+  heartbeatEnabled?: boolean;
+  heartbeatIntervalMinutes?: number;
+  lastHeartbeatTime?: number;
+  startTime?: number;
+  directMode?: boolean;
 }
 
 export interface StorageData {

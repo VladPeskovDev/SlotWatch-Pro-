@@ -17,6 +17,8 @@ const AFTER_CLICK_WAIT_MAX = 28000;
 
 const BOOK_BUTTON_TEXT = 'Записаться на посещение';
 const NO_SLOTS_TEXT = 'Нет свободного времени для записи';
+const SLOTS_MARKER_1 = 'Выберите дату и время';
+const SLOTS_MARKER_2 = 'Отправить заявление';
 
 chrome.runtime.onInstalled.addListener(() => {
   initializeStorage();
@@ -70,16 +72,27 @@ async function startBot(): Promise<MessageResponse> {
     return { success: false, error: 'Нет активной вкладки' };
   }
 
+  const startTime = Date.now();
+  const intervalMin = data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN;
+  const intervalMax = data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX;
+
   const config: MonitoringConfig = {
     ...(data.monitoring || {}),
     isActive: true,
-    intervalMin: data.monitoring?.intervalMin || DEFAULT_INTERVAL_MIN,
-    intervalMax: data.monitoring?.intervalMax || DEFAULT_INTERVAL_MAX,
+    intervalMin,
+    intervalMax,
     targetUrl: tab.url,
     targetTabId: tab.id,
     attemptCount: 0,
+    startTime,
+    lastHeartbeatTime: startTime,
   };
   await chrome.storage.local.set({ monitoring: config });
+
+  await sendTelegram(
+    data.telegram,
+    `✅ SlotWatch запущен\nПроверяю очередь каждые ${intervalMin}–${intervalMax} сек.\nКак только появятся свободные места — пришлю сообщение.`
+  );
 
   await runCycle();
   return { success: true };
@@ -157,11 +170,25 @@ async function runCycle() {
       return;
     }
 
-    // Keepalive пинг — сбрасывает таймер сессии на сервере
+    // Keepalive — сброс серверного таймера сессии + симуляция активности юзера на фронте
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => fetch(window.location.href, { method: 'HEAD', credentials: 'include' }),
+        func: () => {
+          // 1. Полноценный GET (HEAD Госуслуги перестали засчитывать как активность)
+          fetch(window.location.href, { method: 'GET', credentials: 'include' }).catch(() => {});
+
+          // 2. Симуляция активности юзера — сбрасывает клиентские JS-таймеры бездействия
+          try {
+            window.dispatchEvent(new Event('focus'));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              bubbles: true,
+              clientX: Math.random() * 100,
+              clientY: Math.random() * 100,
+            }));
+            document.dispatchEvent(new Event('scroll'));
+          } catch { /* ignore */ }
+        },
       });
     } catch { /* игнорируем */ }
 
@@ -208,8 +235,8 @@ async function runCycle() {
     });
 
     if (!clickResult[0]?.result) {
-      await notifyError(`Кнопка "${BOOK_BUTTON_TEXT}" не найдена на странице`);
-      await scheduleNextCycle(data.monitoring);
+      await notifyError(`Кнопка "${BOOK_BUTTON_TEXT}" не найдена на странице. Бот остановлен, открой окно и проверь.`);
+      await stopBot();
       return;
     }
 
@@ -218,55 +245,107 @@ async function runCycle() {
     console.log(`Waiting ${waitTime}ms for page to load...`);
     await wait(waitTime);
 
-    // Один чек — смотрим что на экране
+    // Позитивная детекция четырёх состояний:
+    //   NO_SLOTS   — модалка "Нет свободного времени для записи"
+    //   SLOTS      — экран календаря (маркеры: "Выберите дату и время" + "Отправить заявление")
+    //   START      — стартовая страница с кнопкой "Записаться на посещение"
+    //   UNKNOWN    — ничего не совпало → стоп бота, алерт с фрагментом страницы
     const check = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (noSlotsText: string, bookText: string) => ({
-        hasNoSlots: document.body.innerText.includes(noSlotsText),
-        hasBookButton: document.body.innerText.includes(bookText),
-      }),
-      args: [NO_SLOTS_TEXT, BOOK_BUTTON_TEXT],
+      func: (noSlotsText: string, bookText: string, slotsMarker1: string, slotsMarker2: string) => {
+        const text = document.body.innerText;
+        return {
+          hasNoSlots: text.includes(noSlotsText),
+          hasBookButton: text.includes(bookText),
+          hasSlots: text.includes(slotsMarker1) && text.includes(slotsMarker2),
+          pageFragment: text.slice(0, 500),
+        };
+      },
+      args: [NO_SLOTS_TEXT, BOOK_BUTTON_TEXT, SLOTS_MARKER_1, SLOTS_MARKER_2],
     });
 
-    const result = check[0]?.result as { hasNoSlots: boolean; hasBookButton: boolean } | undefined;
+    const result = check[0]?.result as {
+      hasNoSlots: boolean;
+      hasBookButton: boolean;
+      hasSlots: boolean;
+      pageFragment: string;
+    } | undefined;
 
     console.log('Check result:', result);
 
     if (result?.hasNoSlots) {
-      // Мест нет — жмём "Закрыть" по CSS классу
+      // Мест нет — жмём "Закрыть" в модалке .conf-modal (текст-based, устойчиво к смене классов)
       console.log('No slots. Closing modal...');
-      await wait(500); // пауза чтобы кнопка точно стала кликабельной
-      await chrome.scripting.executeScript({
+      await wait(500);
+      const closeResult = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          const btn = document.querySelector('button.white') as HTMLElement | null;
-          btn?.click();
-          return !!btn;
+          const modal = document.querySelector('.conf-modal, .conf-modal__body, [class*="conf-modal"]');
+          if (modal) {
+            const btns = Array.from(modal.querySelectorAll('button')) as HTMLElement[];
+            const closeBtn = btns.find((b) => b.textContent?.trim() === 'Закрыть');
+            if (closeBtn) {
+              closeBtn.click();
+              return { clicked: true, via: 'modal+text' };
+            }
+          }
+          const secondaries = Array.from(document.querySelectorAll('button.secondary')) as HTMLElement[];
+          const closeSecondary = secondaries.find((b) => b.textContent?.trim() === 'Закрыть');
+          if (closeSecondary) {
+            closeSecondary.click();
+            return { clicked: true, via: 'secondary+text' };
+          }
+          const allButtons = Array.from(document.querySelectorAll('button')) as HTMLElement[];
+          const closeAny = allButtons.find((b) => b.textContent?.trim() === 'Закрыть');
+          if (closeAny) {
+            closeAny.click();
+            return { clicked: true, via: 'any+text' };
+          }
+          return { clicked: false };
         },
       });
+      console.log('Close result:', closeResult[0]?.result);
       await wait(getRandomInterval(MODAL_CLOSE_WAIT_MIN, MODAL_CLOSE_WAIT_MAX));
+      await maybeSendHeartbeat(data, attemptCount);
       await scheduleNextCycle(data.monitoring);
 
-    } else if (!result?.hasBookButton) {
-      // Стартовой кнопки нет и модалки нет — мы на экране бронирования!
-      console.log('SLOTS FOUND!');
+    } else if (result?.hasSlots) {
+      // Позитивно подтверждён экран календаря — точно слоты
+      console.log('SLOTS FOUND (positive detection)!');
       await sendTelegram(
         data.telegram!,
-        `🎯 SlotWatch Pro — Слоты найдены!\n\nПопытка #${attemptCount}\nЗаписывайтесь прямо сейчас!\n${targetUrl || ''}`
+        `🔔 SlotWatch — слоты доступны\n\nПопытка #${attemptCount}\nОткрой окно и записывайся:\n${targetUrl || ''}`
       );
       await chrome.notifications.create({
         type: 'basic',
         iconUrl: 'icons/icon128.png',
-        title: '🎯 SlotWatch — Слоты найдены!',
-        message: 'Записывайтесь прямо сейчас!',
+        title: '🔔 SlotWatch — слоты доступны',
+        message: 'Открой окно и записывайся',
         priority: 2,
       });
       await stopBot();
 
-    } else {
+    } else if (result?.hasBookButton) {
       // Всё ещё на стартовой — клик не сработал, пробуем снова
       console.log('Still on start page, retrying...');
       await scheduleNextCycle(data.monitoring);
+
+    } else {
+      // Ни один эталон не совпал — неизвестное состояние
+      console.log('UNKNOWN STATE');
+      const fragment = result?.pageFragment?.replace(/\s+/g, ' ').trim() || '(пусто)';
+      await sendTelegram(
+        data.telegram!,
+        `⚠️ SlotWatch: неизвестное состояние страницы\n\nПопытка #${attemptCount}\n\nВозможные причины:\n• Слоты появились (проверь)\n• Сессия слетела\n• Ошибка сайта\n\nФрагмент страницы:\n${fragment.slice(0, 300)}\n\nБот остановлен. Открой окно и посмотри.`
+      );
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: '⚠️ SlotWatch — проверь вручную',
+        message: 'Неизвестное состояние страницы, бот остановлен',
+        priority: 2,
+      });
+      await stopBot();
     }
 
   } catch (error) {
@@ -283,6 +362,38 @@ async function scheduleNextCycle(config: MonitoringConfig) {
   const seconds = getRandomInterval(config.intervalMin, config.intervalMax);
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: seconds / 60 });
   console.log(`Next cycle in ${seconds}s`);
+}
+
+async function maybeSendHeartbeat(data: Partial<StorageData>, attemptCount: number) {
+  const monitoring = data.monitoring;
+  if (!monitoring?.heartbeatEnabled) return;
+
+  const intervalMs = (monitoring.heartbeatIntervalMinutes || 90) * 60 * 1000;
+  const now = Date.now();
+  const lastHeartbeat = monitoring.lastHeartbeatTime || monitoring.startTime || now;
+
+  if (now - lastHeartbeat < intervalMs) return;
+
+  const uptime = formatUptime(now - (monitoring.startTime || now));
+  const time = new Date(now).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const message = `ℹ️ SlotWatch активен\nПопыток: ${attemptCount} | Работает: ${uptime}\nВсе проверки: свободного времени нет\nПоследняя: ${time}`;
+
+  if (data.telegram?.botToken && data.telegram?.chatId) {
+    await sendTelegram(data.telegram, message);
+  }
+
+  await chrome.storage.local.set({
+    monitoring: { ...monitoring, lastHeartbeatTime: now },
+  });
+  console.log('Heartbeat sent');
+}
+
+function formatUptime(ms: number): string {
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}м`;
+  return `${hours}ч ${minutes}м`;
 }
 
 async function waitForTabLoad(tabId: number, timeout = 8000): Promise<void> {
