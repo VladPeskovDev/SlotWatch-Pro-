@@ -91,7 +91,7 @@ async function startBot(): Promise<MessageResponse> {
 
   await sendTelegram(
     data.telegram,
-    `✅ SlotWatch запущен\nПроверяю очередь каждые ${intervalMin}–${intervalMax} сек.\nКак только появятся свободные места — пришлю сообщение.`
+    `✅ Мониторинг очереди запущен\nПроверяю очередь каждые ${intervalMin}–${intervalMax} сек.\nКак только появятся свободные места — пришлю сообщение.`
   );
 
   await runCycle();
@@ -314,12 +314,12 @@ async function runCycle() {
       console.log('SLOTS FOUND (positive detection)!');
       await sendTelegram(
         data.telegram!,
-        `🔔 SlotWatch — слоты доступны\n\nПопытка #${attemptCount}\nОткрой окно и записывайся:\n${targetUrl || ''}`
+        `🔔 Мониторинг очереди — слоты доступны\n\nПопытка #${attemptCount}\nОткрой окно и записывайся:\n${targetUrl || ''}`
       );
       await chrome.notifications.create({
         type: 'basic',
         iconUrl: 'icons/icon128.png',
-        title: '🔔 SlotWatch — слоты доступны',
+        title: '🔔 Мониторинг очереди — слоты доступны',
         message: 'Открой окно и записывайся',
         priority: 2,
       });
@@ -336,12 +336,12 @@ async function runCycle() {
       const fragment = result?.pageFragment?.replace(/\s+/g, ' ').trim() || '(пусто)';
       await sendTelegram(
         data.telegram!,
-        `⚠️ SlotWatch: неизвестное состояние страницы\n\nПопытка #${attemptCount}\n\nВозможные причины:\n• Слоты появились (проверь)\n• Сессия слетела\n• Ошибка сайта\n\nФрагмент страницы:\n${fragment.slice(0, 300)}\n\nБот остановлен. Открой окно и посмотри.`
+        `⚠️ Мониторинг очереди: неизвестное состояние страницы\n\nПопытка #${attemptCount}\n\nВозможные причины:\n• Слоты появились (проверь)\n• Сессия слетела\n• Ошибка сайта\n\nФрагмент страницы:\n${fragment.slice(0, 300)}\n\nБот остановлен. Открой окно и посмотри.`
       );
       await chrome.notifications.create({
         type: 'basic',
         iconUrl: 'icons/icon128.png',
-        title: '⚠️ SlotWatch — проверь вручную',
+        title: '⚠️ Мониторинг очереди — проверь вручную',
         message: 'Неизвестное состояние страницы, бот остановлен',
         priority: 2,
       });
@@ -376,7 +376,7 @@ async function maybeSendHeartbeat(data: Partial<StorageData>, attemptCount: numb
 
   const uptime = formatUptime(now - (monitoring.startTime || now));
   const time = new Date(now).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  const message = `ℹ️ SlotWatch активен\nПопыток: ${attemptCount} | Работает: ${uptime}\nВсе проверки: свободного времени нет\nПоследняя: ${time}`;
+  const message = `🟢 Мониторинг очереди активен\nПопыток: ${attemptCount} | Работает: ${uptime}\nВсе проверки: свободного времени нет\nПоследняя: ${time}`;
 
   if (data.telegram?.botToken && data.telegram?.chatId) {
     await sendTelegram(data.telegram, message);
@@ -413,12 +413,12 @@ async function waitForTabLoad(tabId: number, timeout = 8000): Promise<void> {
 async function notifyError(message: string) {
   const data = (await chrome.storage.local.get('telegram')) as Partial<StorageData>;
   if (data.telegram?.botToken && data.telegram?.chatId) {
-    await sendTelegram(data.telegram, `⚠️ SlotWatch ошибка:\n${message}`);
+    await sendTelegram(data.telegram, `🛑 Мониторинг очереди — ошибка:\n${message}`);
   }
   await chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: 'SlotWatch — Ошибка',
+    title: 'Мониторинг очереди — Ошибка',
     message,
     priority: 1,
   });
